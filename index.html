@@ -35,6 +35,24 @@
             background-color: var(--color-background-primary);
             color: var(--color-text-primary);
             font-family: 'Lora', serif;
+            /* iOS WebView fixes */
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            /* Prevent iOS bounce scrolling during video */
+            overscroll-behavior: none;
+        }
+
+        /* iOS-specific video fixes */
+        video {
+            /* Prevent iOS from adding controls automatically */
+            -webkit-appearance: none;
+            /* Ensure video stays inline on iOS */
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
 
         h1,
@@ -155,10 +173,22 @@
     <!-- Phase 1: Entry Video Gate -->
     <div id="entry-video-gate"
         class="wedding-video-gate fixed inset-0 flex items-center justify-center bg-black z-[100] cursor-pointer">
-        <video id="entry-video" class="w-full h-full object-cover" playsinline>
+        <video id="entry-video" class="w-full h-full object-cover" playsinline webkit-playsinline muted preload="metadata">
             <source src="entry.mp4" type="video/mp4">
             Your browser does not support the video tag.
         </video>
+        <!-- Click to Enter Overlay -->
+        <div class="absolute inset-0 flex items-center justify-center z-10">
+            <div class="text-center text-white">
+                <div class="w-20 h-20 mx-auto mb-4 rounded-full bg-white bg-opacity-20 flex items-center justify-center backdrop-blur-sm animate-pulse">
+                    <svg class="w-8 h-8 ml-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold mb-2">Welcome</h2>
+                <p class="text-lg opacity-90">Click to enter our wedding celebration</p>
+            </div>
+        </div>
     </div>
 
     <!-- Phase 2: Main Website Content -->
@@ -381,14 +411,62 @@
     </div>
 
     <script>
-        // Entry Video Gate Logic
+        // iOS Safari Video Handling
         const entryVideoGate = document.getElementById('entry-video-gate');
         const entryVideo = document.getElementById('entry-video');
         const mainContent = document.getElementById('main-content');
 
+        // Detect iOS Safari
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+        let videoStartTime = 0;
+        let transitionTimeout = null;
+        let hasUserInteracted = false;
+
+        // Force repaint/reflow on iOS (critical for WebView)
+        function forceIOSReflow() {
+            if (isIOS) {
+                document.body.style.display = 'none';
+                document.body.offsetHeight; // Trigger reflow
+                document.body.style.display = '';
+            }
+        }
+
+        // iOS-safe transition to main content
+        function transitionToMainContent() {
+            if (transitionTimeout) clearTimeout(transitionTimeout);
+
+            // Force reflow before showing content
+            forceIOSReflow();
+
+            // Small delay to ensure DOM updates
+            setTimeout(() => {
+                entryVideoGate.classList.add('hidden');
+                mainContent.classList.remove('hidden');
+                mainContent.classList.add('fade-in');
+                document.body.style.overflow = 'auto';
+
+                // Final reflow after content is visible
+                requestAnimationFrame(() => {
+                    forceIOSReflow();
+                });
+            }, 100);
+        }
+
+        // Enhanced click handler with iOS-specific logic
         entryVideoGate.addEventListener('click', () => {
+            hasUserInteracted = true;
+
             if (entryVideo.paused) {
-                entryVideo.play().catch(error => {
+                // Record start time for fallback timeout
+                videoStartTime = Date.now();
+
+                entryVideo.play().then(() => {
+                    // iOS Safari sometimes needs explicit reflow after play
+                    if (isIOS) {
+                        requestAnimationFrame(forceIOSReflow);
+                    }
+                }).catch(error => {
                     console.error("Video play failed:", error);
                 });
             } else {
@@ -396,14 +474,50 @@
             }
         });
 
+        // Multiple event listeners for maximum iOS compatibility
         entryVideo.addEventListener('ended', () => {
-            entryVideoGate.classList.add('hidden');
-            mainContent.classList.remove('hidden');
-            mainContent.classList.add('fade-in');
-            document.body.style.overflow = 'auto';
+            console.log('Video ended event fired');
+            transitionToMainContent();
+        });
+
+        // Fallback: Time-based transition (iOS sometimes doesn't fire 'ended')
+        entryVideo.addEventListener('play', () => {
+            console.log('Video started playing');
+            if (transitionTimeout) clearTimeout(transitionTimeout);
+
+            // Estimate video duration (adjust based on your video length)
+            const estimatedDuration = 10000; // 10 seconds - adjust this!
+
+            transitionTimeout = setTimeout(() => {
+                if (!mainContent.classList.contains('fade-in')) {
+                    console.log('Fallback timeout triggered');
+                    transitionToMainContent();
+                }
+            }, estimatedDuration + 1000); // Add 1 second buffer
+        });
+
+        // Additional iOS Safari event listeners
+        if (isIOS) {
+            entryVideo.addEventListener('pause', () => {
+                console.log('Video paused - checking if we should transition');
+                // If video is paused near the end, transition anyway
+                if (entryVideo.currentTime > entryVideo.duration - 2) {
+                    transitionToMainContent();
+                }
+            });
+        }
+
+        // iOS Safari: Force reflow on visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && isIOS) {
+                forceIOSReflow();
+            }
         });
 
         document.body.style.overflow = 'hidden';
+
+        // Debug logging for iOS troubleshooting
+        console.log('Device detection:', { isIOS, userAgent: navigator.userAgent });
 
         // Countdown Timer Logic
         const weddingDate = new Date('February 9, 2026 00:00:00 GMT+0530');
